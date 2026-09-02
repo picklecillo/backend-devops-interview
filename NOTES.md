@@ -2,63 +2,55 @@
 
 ## What I did and why
 
-**Developer experience: Docker Compose dev environment**
+**Developer experience: local env setup**
 
-- `Dockerfile`, `docker-compose.yml`, `docker/entrypoint.sh`: containerize the app and Postgres so `make up` is the whole setup step, replacing "install mise, install a local Postgres 16, create a database by hand" from the README.
-- `core/settings.py`: DB config now reads `POSTGRES_*` env vars, falling back to the previous hardcoded `localhost`/`postgres`/`postgres` defaults — the existing host-based (`uv run ...`) workflow still works unchanged.
-- Entrypoint only waits for the db and runs migrations, then starts the dev server. Seeding is a separate `make seed` target rather than baked into container startup, because the seed script takes a long time (see below) and shouldn't block `make up` / `make logs` from being usable.
-- `Makefile`: `install` (bootstraps mise + uv for anyone not using Docker), `up`, `logs`, `down`, `seed`, `test` (`uv run pytest` on the host), `format` (`uv run ruff format .`).
-- `pyproject.toml`: added `extend-exclude = ["*/migrations/*"]` to `[tool.ruff]` so `make format` doesn't rewrite Django-generated migration files.
-- Ran `make format` and committed the result: `blog/apps.py`, `blog/tests/test_comments.py`, `core/asgi.py`, `core/wsgi.py`, `manage.py` predated ruff being wired up as a formatter here. Pure style (quote normalization, line wraps), no behavior change.
-- Source is bind-mounted into the app container for hot reload; the container's `.venv` is a separate named volume so a host macOS `.venv` doesn't shadow the container's Linux one.
-- `django-environ`: `SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS`, and `DATABASES` now read through `environ.Env` (loading `.env` from `BASE_DIR`), with the previous hardcoded values kept as defaults. `.env.example` documents every var and is committed; a real `.env` is gitignored and copied from it for local dev. `docker-compose.yml` loads both services via `env_file: .env`, with an explicit `POSTGRES_HOST: db` override on `app` since the container needs the compose service name, not `localhost`.
-  - Hit and fixed a footgun along the way: Compose auto-loads a project-root `.env` for its own `${VAR}` substitution syntax, separate from `env_file:` pass-through. The original `SECRET_KEY` contained a literal `$d3v0`, which Compose silently interpolated away as an unset variable. Regenerated the key without `$`/`#` and documented the pitfall in `.env.example`.
-- `django-debug-toolbar`: app, middleware, and urls only load when `DEBUG=True` (`core/settings.py`, `core/urls.py`) so it can never ship in a non-debug deployment. `SHOW_TOOLBAR_CALLBACK` bypasses the `INTERNAL_IPS` check since Docker's client IP isn't `127.0.0.1`; `UPDATE_ON_FETCH` registers fetch/XHR calls (e.g. from the `/api/docs` Swagger UI) in the toolbar's request history. Verified it renders on `/admin/login/` both via `runserver` on the host and through the Docker container. Note: it only injects into `text/html` responses with a `</body>` tag, so it doesn't visually appear on the JSON `/api/*` endpoints themselves — `/admin/` only.
+* Created a Makefile for improved DX. There's `install` (bootstraps mise + uv for anyone not using Docker), `up`, `logs`, `down`, `seed`, `test` (`uv run pytest` on the host), `format` (`uv run ruff format .`).
+* Containerized th app and db so `make up` is the only step needed to get the local environment ready.
+* Improved the speed of the db seed command so it takes way less time (`make seed`).
+* Source is bind-mounted into the app container for hot reload; the container's `.venv` is a separate named volume so a host macOS `.venv` doesn't shadow the container's Linux one.
+* Set up `django-environ` so all secrets and config are loaded from a local (unstaged) `.env` file. There's a `.env.example` for reference. `docker-compose.yml` loads both services with `env_file: .env` + an explicit `POSTGRES_HOST: db` override on `app` since the container needs the compose service name, not `localhost`.
+* Set up `django-debug-toolbar`: app, middleware, and urls only load when `DEBUG=True` (`core/settings.py`, `core/urls.py`) so it can never ship in a non-debug deployment. `SHOW_TOOLBAR_CALLBACK` bypasses the `INTERNAL_IPS` check since Docker's client IP isn't `127.0.0.1`; `UPDATE_ON_FETCH` registers fetch/XHR calls (e.g. from the `/api/docs` Swagger UI) in the toolbar's request history.
+* Fixed `seed.py`'s comment-seeding loop calling `random.choices(post_ids, weights=post_weights, k=1)` once per comment (500k times) over a 100k-item weighted list, and similarly once per post for author selection. Fixed by generating all the weighted samples in a single call before any loop, instead of once for each row.
+
+**Architecture: a service layer**
+
+* Introduced a service layer so that api endpoints call a specific service method instead of directly interacting with the ORM. This may look like an early optimization right now, but it makes things easier when there's multiple apps that need other apps' logic. This way, for instance, there's a single place where a Post is created. If any other app needs to create a Post, that's the only point of contact. Also, side effects like enqueuing a notification can go on that same method. This also allows the bulk of the unit testing to go on the service methods and not the views (less mocking, no auth needed, etc)
+* Note, thin views and a service layer is a personal preference but, while there's other ways code could be structured, this is one I've found produces less friction when there's multiple teams that own different apps on the same codebase, is very DRY and abstracts away the logic so there's less cognitive load when working with unfamiliar apps.
 
 **Performance: N+1 queries and unbounded list_posts**
 
-- `list_posts`, `search_posts`, `posts_by_tag`, and `get_post` (`blog/api.py`) all triggered a query per row: `post.author` and `post.tags.all()` per post, plus `comment.author` per comment in `get_post`. Added `select_related("author")` / `prefetch_related("tags")` (and `select_related("author")` on the comments queryset). Verified with `CaptureQueriesContext`: `list_posts` over ~90k published posts went from thousands of queries to 2; `get_post` on a post with 162 comments went from ~165 queries to 4.
-- `list_posts` also returned every published post in a single response (90k+ rows serialized every call). Added simple page-number pagination, 100 per page, `?page=` query param, default `page=1`. Kept the existing plain-list response shape (rather than Ninja's built-in wrapping pagination) so the existing smoke test and any consumer expecting a bare array aren't broken. Applied the same pagination to `search_posts` and `posts_by_tag`.
-- Found and fixed a bug the debug-toolbar work introduced: `SHOW_TOOLBAR_CALLBACK`'s lambda closed over the frozen local `DEBUG` constant instead of the dynamic `django.conf.settings.DEBUG`. Django's test runner forces `settings.DEBUG=False` for the whole test run (by design, so tests observe prod-like behavior); `core/urls.py` correctly respected that and skipped registering debug-toolbar's URLs, but the callback still returned `True` and tried to render a toolbar whose URLs didn't exist, crashing every view test with a `djdt` namespace `KeyError`. Fixed by referencing `django.conf.settings.DEBUG` directly.
+* `list_posts`, `search_posts`, `posts_by_tag`, and `get_post` (`blog/api.py`) all triggered a query per row: `post.author` and `post.tags.all()` per post, plus `comment.author` per comment in `get_post`. Added `select_related("author")` / `prefetch_related("tags")` (and `select_related("author")` on the comments queryset). As an example, `list_posts` over ~90k published posts went from thousands of queries to 2.
+* Set up pagination (set default to 100) for `list_posts`, `search_posts` and `posts_by_tag`.
 
 **Production readiness: Fly.io deployment**
 
-- Two separate Fly apps, kept simple per the assignment's ask: `fly.toml` (root) + `Dockerfile.fly` for the app process, `db/fly.toml` + `db/Dockerfile` for a self-managed, single-node Postgres instance (vanilla `postgres:16`) instead of Fly's managed Postgres product, to keep costs down.
-- `Dockerfile.fly`: built without dev dependencies (`UV_NO_DEV=1` — `uv run`'s implicit re-sync was pulling `ruff`/`pytest` back in even after `--no-dev` on `uv sync`, so the env var was needed to keep it out consistently), runs `collectstatic` at build time, serves via `gunicorn core.wsgi:application`. No entrypoint script — `release_command` in `fly.toml` runs migrations in a temporary Fly machine before the new version goes live, so the running app process never runs `migrate` itself.
-- `core/views.py`: added `/healthz`, checking DB connectivity (`connection.ensure_connection()`), wired into `core/urls.py`. Used as the `http_service` check in `fly.toml` so Fly catches app-level failures, not just "is the process listening."
-- `db/fly.toml`: backed by a Fly Volume mount at `/var/lib/postgresql/data` (with `PGDATA` pointed at a subdirectory to dodge the `lost+found` issue on a fresh ext4 volume). No `http_service` block — it's reachable only from the app, over Fly's private 6PN network, at `<db-app>.internal:5432`. One-time setup (`fly apps create`, `fly volumes create`, `fly secrets set`) is documented as comments in the file since those are manual `flyctl` steps, not declarative config.
-- `whitenoise` + `gunicorn` added as real (non-dev) dependencies. `STORAGES`/`MIDDLEWARE` only switch to whitenoise's manifest-based static serving when `DEBUG=False`; dev's `runserver`-based static handling is untouched (kept the two paths separate after whitenoise's middleware threw a "no directory at staticfiles/" warning in dev, where `collectstatic` is never run).
-- `.dockerignore`: also fixes a real pre-existing gap surfaced by this work — `.env` was getting baked into every image via `COPY . .` with nothing excluding it. Applies to the dev `Dockerfile` too.
-- Verified by building `Dockerfile.fly` standalone and running it against the existing docker-compose Postgres: `/healthz`, `/admin/`, and `/api/posts` all returned 200, no debug-toolbar markup present (correctly excluded since `DEBUG=False`), and `.env` confirmed absent from the built image. Re-verified the dev docker-compose stack and host test suite still work unchanged.
-- App names (`backend-devops-interview-8675309` / `-db-8675309`) and region (`scl`, Santiago) are placeholders — Fly requires globally unique app names, so these need renaming before an actual deploy.
+* Configured the project to be deployed to Fly.io. Set up two separate Fly apps and Dockerfiles, one at the root and another at `/db/` for a self-managed postgres instance.
+* `Dockerfile.fly`: built without dev dependencies (`UV_NO_DEV=1`), runs `collectstatic` at build time, serves via `gunicorn core.wsgi:application`. 
+* No entrypoint script — `release_command` in `fly.toml` runs migrations in a temporary Fly machine before the new version goes live, so the running app process never runs `migrate` itself.
+* Added a `/healthz` endpoint to ensure DB connectivity for use as the `http_service` check in `fly.toml`.
+* Set up `whitenoise` + `gunicorn` added as real (non-dev) dependencies. `STORAGES`/`MIDDLEWARE` only switch to whitenoise's manifest-based static serving when `DEBUG=False`.
 
 **CI: GitHub Actions deploy workflow**
 
-- `.github/workflows/deploy.yml`, modeled on a sibling project's `deploy.yml`: a `changes` job (path-filtered, so unrelated changes skip CI) gates a `test` job that builds the app image with GHA layer caching and runs the suite via `docker compose run --rm app uv run pytest` — no host `uv`/`mise` setup needed on the runner, and `docker compose run` waits on `db`'s healthcheck automatically through the existing `depends_on: condition: service_healthy`. A `deploy` job then deploys `db/` first, waits for its Fly machine to actually start (`flyctl machines wait`), then deploys the app — mirroring the reference workflow's db-before-app ordering so migrations never race a not-yet-running database.
-- Left out the reference workflow's e2e job entirely (asked for; there's nothing to run here) and its `SECRET_KEY` pass-through on the deploy step, replacing it with a comment pointing at the `fly secrets set` steps already documented in `fly.toml`/`db/fly.toml` — a runner-local env var wouldn't reach the deployed app anyway.
-- Verified the `test` job's exact steps locally: built the image under the CI tag, `cp .env.example .env` (CI has no `.env`, and `docker-compose.yml` requires `env_file: .env`), `docker compose up -d db`, `docker compose run --rm app uv run pytest` — all 3 tests passed.
-- **Incident during verification**: the local verification's `docker compose down -v` teardown deleted the `pgdata` Docker volume, which held the ~100k posts / 500k comments seeded earlier in this session (the one that took over an hour due to the seed script's O(n·k) sampling, below). That data was gone; re-seeded from scratch after fixing the seed script (see next section). Should have flagged the destructive `-v` flag before running it rather than after — noting it here so it's not a silent surprise for whoever picks this up.
+* Set up a deployment workflow (`.github/workflows/deploy.yml`), with caching and conditional run of tests only if relevant files have been changed.
 
-**Seed script performance**
+**Minor tweaks** 
+* Excluded migrations (with `extend-exclude = ["*/migrations/*"]`) from ruff formatting and then formatted the codebase.
+* `.dockerignore` ignores the `.env` file so it does not end up on an image.
 
-- `seed.py`'s comment-seeding loop called `random.choices(post_ids, weights=post_weights, k=1)` once per comment (500k times) over a 100k-item weighted list, and similarly once per post for author selection. `random.choices` rebuilds its cumulative-weights table from scratch on *every* call, so sampling one-at-a-time in a loop is O(n·k) — this is what made seeding take well over an hour instead of the README's stated "few minutes."
-- Fixed by drawing all `k` weighted samples in a single batched call before each loop (`fake.random_choices(elements=OrderedDict(...), length=k)`) instead of one call per row — same underlying mechanism as `random.choices`, but the cumulative-weights table is built once instead of `k` times, giving O(n + k log n). Faker's method was used (rather than bare `random.choices(..., k=N)`) since Faker is already the seeding convention throughout this file and its `Faker.seed(42)` call keeps sampling deterministic.
-- **Result: full reseed (1000 users, 100k posts, 500k comments, 50 tags) now takes ~2m24s**, verified by timing a real `manage.py seed` run and checking row counts and `post_tags` link counts came out correct afterward. This is also what re-seeded the database after the volume-loss incident above.
 
 ## What I deliberately didn't do
 
-- **Didn't actually run `fly deploy`.** The Fly config is written and the prod image is verified locally (built, run, and smoke-tested against a real Postgres), but I don't have a Fly account/org to provision against in this session, so app creation, volume creation, secrets, and the real deploy are left as documented manual steps.
-- **No auth/authz** and **no new test coverage**, per the README's non-goals.
-- **Didn't restructure the app layout.** Not moving `blog` (and any future apps) under an `/apps/` directory, and not splitting `User` out into its own `accounts` app. The README calls reshaping the domain model out of scope unless a perf fix needs it, and neither of these is a perf fix — just structural preference. Leaving it as a single flat `blog` app.
-- **Didn't reach for django-silk or another API-oriented profiler.** debug-toolbar's overlay doesn't inject into JSON responses, so it can't visually attach to `/api/*` calls the way it does `/admin/`. Went with the standard install anyway since it's still useful for `/admin/` and its stored-request history (helped by `UPDATE_ON_FETCH`); a JSON-aware profiler would be the better tool if API-path query debugging via UI becomes a real need.
+* **Didn't actually run `fly deploy`.** The Fly config is written and the prod image is verified locally (built, run, and smoke-tested against a real Postgres), but I don't have a Fly account/org to provision against in this session, so app creation, volume creation, secrets, and the real deploy are left as documented manual steps.
+* **Didn't restructure the app layout.** Not moving `blog` (and any future apps) under an `/apps/` directory, and not splitting `User` out into its own `accounts` app.
+* **Didn't add any more tests** Didn't set up more tests, coverage tools, etc
 
 ## What I'd do next with another day
 
-1. **Actually deploy it**: create the Fly org/apps, provision the Postgres volume, set secrets, add `FLY_API_TOKEN` as a repo secret, run the first `fly deploy` on each app (via the new workflow or manually), and confirm the live health check passes.
-2. Consider a full-text index (`SearchVector`/GIN or trigram) for `search_posts` instead of `icontains` over `title`/`body`, which is a sequential scan at this table size.
-3. **Add DB indexes** — `Post.is_published` + `Post.created_at` are filtered/sorted on every list endpoint; a composite index would help once query counts are already fixed.
-4. A multi-stage `Dockerfile.fly` to shrink the prod image further (currently single-stage, matching the dev Dockerfile's style for consistency).
+* **Actually deploy it**: create the Fly org/apps, provision the Postgres volume, set secrets, add `FLY_API_TOKEN` as a repo secret, run the first `fly deploy` on each app (via the new workflow or manually), and confirm the live health check passes.
+* **Add DB indexes** — `Post.is_published` + `Post.created_at` are filtered/sorted on every list endpoint; a composite index would help once query counts are already fixed.
+* **Reduce the Docker image size** A multi-stage `Dockerfile.fly` to shrink the prod image further.
 
 ## AI usage
 
-Done with Claude Code (Sonnet 5) as a pair-programming agent — it wrote the Docker/Makefile setup, diagnosed and fixed the N+1s (verified via query-count assertions against the live seeded container, not just code review), and added pagination. I directed scope and reviewed/tested each change against the running stack before moving on.
+Done with Claude Code (Sonnet 5).
