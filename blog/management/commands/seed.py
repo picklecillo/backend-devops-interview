@@ -1,4 +1,5 @@
 import random
+from collections import OrderedDict
 from datetime import timedelta
 
 from django.core.management.base import BaseCommand
@@ -69,6 +70,12 @@ class Command(BaseCommand):
         body_pool = [fake.text(max_nb_chars=600) for _ in range(BODY_POOL_SIZE)]
 
         author_weights = _power_law_weights(len(user_ids), top_n=10, top_share=0.3)
+        weighted_users = OrderedDict(zip(user_ids, author_weights))
+
+        # random.choices() rebuilds its cumulative-weights table on every call, so
+        # sampling one-at-a-time in a loop is O(n*k). Drawing all k samples in a
+        # single batched call builds that table once, giving O(n + k log n).
+        post_author_ids = fake.random_choices(elements=weighted_users, length=NUM_POSTS)
 
         self.stdout.write(f"Seeding {NUM_POSTS} posts...")
         recent_days = 180
@@ -81,10 +88,9 @@ class Command(BaseCommand):
                         ts = _random_time(recency_cutoff, now)
                     else:
                         ts = _random_time(three_years_ago, now)
-                    author_id = random.choices(user_ids, weights=author_weights, k=1)[0]
                     chunk.append(
                         Post(
-                            author_id=author_id,
+                            author_id=post_author_ids[i],
                             title=random.choice(title_pool),
                             body=random.choice(body_pool),
                             is_published=random.random() < 0.9,
@@ -119,15 +125,16 @@ class Command(BaseCommand):
 
         self.stdout.write(f"Seeding {NUM_COMMENTS} comments...")
         post_weights = _long_tail_weights(len(post_ids), top_pct=0.01, top_share=0.5)
+        weighted_posts = OrderedDict(zip(post_ids, post_weights))
+        comment_post_ids = fake.random_choices(elements=weighted_posts, length=NUM_COMMENTS)
+        comment_author_ids = fake.random_choices(elements=weighted_users, length=NUM_COMMENTS)
         for chunk_start in range(0, NUM_COMMENTS, BATCH):
             chunk = []
-            for _ in range(chunk_start, min(chunk_start + BATCH, NUM_COMMENTS)):
-                pid = random.choices(post_ids, weights=post_weights, k=1)[0]
-                aid = random.choices(user_ids, weights=author_weights, k=1)[0]
+            for i in range(chunk_start, min(chunk_start + BATCH, NUM_COMMENTS)):
                 chunk.append(
                     Comment(
-                        post_id=pid,
-                        author_id=aid,
+                        post_id=comment_post_ids[i],
+                        author_id=comment_author_ids[i],
                         body=fake.sentence(nb_words=random.randint(5, 30)),
                         created_at=_random_time(three_years_ago, now),
                     )
