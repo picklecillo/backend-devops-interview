@@ -55,7 +55,8 @@ def list_posts(request, page: int = 1):
 
 
 @router.get("/posts/search", response=list[PostListOut])
-def search_posts(request, q: str):
+def search_posts(request, q: str, page: int = 1):
+    start = (page - 1) * POSTS_PAGE_SIZE
     posts = (
         Post.objects.filter(
             Q(title__icontains=q) | Q(body__icontains=q),
@@ -63,19 +64,20 @@ def search_posts(request, q: str):
         )
         .select_related("author")
         .prefetch_related("tags")
-        .order_by("-created_at")
+        .order_by("-created_at")[start : start + POSTS_PAGE_SIZE]
     )
     return [_serialize_post_list(p) for p in posts]
 
 
 @router.get("/posts/by-tag/{slug}", response=list[PostListOut])
-def posts_by_tag(request, slug: str):
+def posts_by_tag(request, slug: str, page: int = 1):
     tag = get_object_or_404(Tag, slug=slug)
+    start = (page - 1) * POSTS_PAGE_SIZE
     posts = (
         tag.posts.filter(is_published=True)
         .select_related("author")
         .prefetch_related("tags")
-        .order_by("-created_at")
+        .order_by("-created_at")[start : start + POSTS_PAGE_SIZE]
     )
     return [_serialize_post_list(p) for p in posts]
 
