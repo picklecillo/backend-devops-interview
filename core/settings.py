@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import environ
+from django.conf import settings as django_settings
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -42,9 +43,11 @@ if DEBUG:
     MIDDLEWARE.insert(1, "debug_toolbar.middleware.DebugToolbarMiddleware")
     INTERNAL_IPS = ["127.0.0.1"]
 
-    # Docker doesn't use 127.0.0.1 as the client IP, so bypass the IP check in DEBUG mode
+    # Docker doesn't use 127.0.0.1 as the client IP, so bypass the IP check in DEBUG mode.
+    # Reads django.conf.settings.DEBUG dynamically (not the frozen local DEBUG above) so
+    # this stays in sync with Django's test runner, which forces DEBUG=False for tests.
     DEBUG_TOOLBAR_CONFIG = {
-        "SHOW_TOOLBAR_CALLBACK": lambda request: DEBUG,
+        "SHOW_TOOLBAR_CALLBACK": lambda request: django_settings.DEBUG,
         "UPDATE_ON_FETCH": True,
     }
 
