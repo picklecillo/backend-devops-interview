@@ -39,31 +39,52 @@ def _serialize_post_list(post: Post) -> dict:
     }
 
 
+POSTS_PAGE_SIZE = 100
+
+
 @router.get("/posts", response=list[PostListOut])
-def list_posts(request):
-    posts = Post.objects.filter(is_published=True).order_by("-created_at")
+def list_posts(request, page: int = 1):
+    start = (page - 1) * POSTS_PAGE_SIZE
+    posts = (
+        Post.objects.filter(is_published=True)
+        .select_related("author")
+        .prefetch_related("tags")
+        .order_by("-created_at")[start : start + POSTS_PAGE_SIZE]
+    )
     return [_serialize_post_list(p) for p in posts]
 
 
 @router.get("/posts/search", response=list[PostListOut])
 def search_posts(request, q: str):
-    posts = Post.objects.filter(
-        Q(title__icontains=q) | Q(body__icontains=q),
-        is_published=True,
-    ).order_by("-created_at")
+    posts = (
+        Post.objects.filter(
+            Q(title__icontains=q) | Q(body__icontains=q),
+            is_published=True,
+        )
+        .select_related("author")
+        .prefetch_related("tags")
+        .order_by("-created_at")
+    )
     return [_serialize_post_list(p) for p in posts]
 
 
 @router.get("/posts/by-tag/{slug}", response=list[PostListOut])
 def posts_by_tag(request, slug: str):
     tag = get_object_or_404(Tag, slug=slug)
-    posts = tag.posts.filter(is_published=True).order_by("-created_at")
+    posts = (
+        tag.posts.filter(is_published=True)
+        .select_related("author")
+        .prefetch_related("tags")
+        .order_by("-created_at")
+    )
     return [_serialize_post_list(p) for p in posts]
 
 
 @router.get("/posts/{post_id}", response=PostDetailOut)
 def get_post(request, post_id: int):
-    post = get_object_or_404(Post, id=post_id)
+    post = get_object_or_404(
+        Post.objects.select_related("author").prefetch_related("tags"), id=post_id
+    )
     post.view_count += 1
     post.save()
 
@@ -74,7 +95,7 @@ def get_post(request, post_id: int):
             "body": c.body,
             "created_at": c.created_at,
         }
-        for c in post.comments.order_by("created_at")
+        for c in post.comments.select_related("author").order_by("created_at")
     ]
     return {
         "id": post.id,
