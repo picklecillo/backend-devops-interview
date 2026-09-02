@@ -195,3 +195,17 @@ Verified the `test` job's exact steps locally, which required tearing down and r
 **User:** update NOTES.md and CHAT_TRANSCRIPT.md
 
 **Claude:** Added a "CI: GitHub Actions deploy workflow" section to `NOTES.md` covering what was adapted from the reference and why, plus an explicit "Incident during verification" bullet documenting the volume-loss mistake so it isn't a silent surprise for whoever picks this up. Removed the now-stale "didn't add CI/CD" skip-item and "wire smoke tests into CI" next-step (both done), and updated the "actually deploy it" next-step to mention `FLY_API_TOKEN` as a needed repo secret. Updated this transcript with the intervening exchanges.
+
+**User:** let's tackle the issue of the random method that makes the seed script take so long, could it be replaced with a Faker method?
+
+**Claude:** Confirmed via context7 that Faker's `random_choices`/`random_elements` accept a `length` parameter for drawing many weighted samples in one call — but explained the fix isn't really about Faker vs. stdlib: `random.choices()` rebuilds its cumulative-weights table from scratch on every call, so sampling one-at-a-time in a loop is O(n·k); calling it once with `length=k` builds that table once, giving O(n + k log n). Faker's batched method was the natural fit since Faker's already the seeding convention throughout the file.
+
+Implemented in `blog/management/commands/seed.py`: precomputed `post_author_ids` (100k weighted picks) and, for comments, `comment_post_ids`/`comment_author_ids` (500k weighted picks each) via `fake.random_choices(elements=OrderedDict(...), length=N)` before each loop, indexing into the precomputed lists instead of drawing per-row. Ran a real timed `manage.py seed` (which also re-seeded the database lost to the earlier `docker compose down -v` incident): full reseed dropped from over an hour to **2m24s**. Verified row counts came out correct (1000 users, 50 tags, 100k posts, 500k comments, 242,899 post-tag links) and the API/test suite still work against the fresh data.
+
+**User:** commit the seed script fix
+
+**Claude:** Committed `blog/management/commands/seed.py` as `212c4be` — "Batch weighted random sampling in seed.py."
+
+**User:** update NOTES.md and CHAT_TRANSCRIPT.md
+
+**Claude:** Added a "Seed script performance" section to `NOTES.md` with the fix and the 2m24s result, removed the now-resolved "didn't touch the seed script" skip-item and "fix the seed script" next-step, and updated the volume-loss incident note to point at the fix rather than leaving it open. Updated this transcript with the intervening exchanges.
