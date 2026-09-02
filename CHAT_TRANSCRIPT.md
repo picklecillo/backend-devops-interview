@@ -209,3 +209,23 @@ Implemented in `blog/management/commands/seed.py`: precomputed `post_author_ids`
 **User:** update NOTES.md and CHAT_TRANSCRIPT.md
 
 **Claude:** Added a "Seed script performance" section to `NOTES.md` with the fix and the 2m24s result, removed the now-resolved "didn't touch the seed script" skip-item and "fix the seed script" next-step, and updated the volume-loss incident note to point at the fix rather than leaving it open. Updated this transcript with the intervening exchanges.
+
+**User:** i'd like to create a PostService class that gets called on the api views instead of it directly calling the model. So for instance `search_posts` would call `PostService.search_posts(query_string)` and the service method would hold the actual ORM logic. ask any clarifying questions
+
+**Claude:** Asked three clarifying questions: scope (just `search_posts` vs. all Post-related endpoints), whether Comment-related logic gets its own `CommentService` too, and whether service methods should return raw model objects/querysets (views keep serializing) or fully serialized dicts. User chose: all Post-related endpoints, also extract a `CommentService`, raw querysets/model instances returned — but with pagination slicing staying in the view rather than the service.
+
+Implemented `blog/services.py`: `PostService` (`list_posts`, `search_posts`, `posts_by_tag` — each returning the full ordered, `select_related`/`prefetch_related`-optimized queryset, unpaginated; `get_post` — fetch + view-count increment + save; `create_post` — self-contained including author/tag lookups) and `CommentService` (`comments_for_post`, `create_comment` — self-contained including post/author lookups). Rewrote `blog/api.py`'s views to call these instead of touching the ORM directly, keeping the `page`-based slicing and `_serialize_post_list`/`_serialize_author`/`_serialize_tag` serialization in the views. Left `find_user_by_email`/`get_user`/`_user_detail` untouched (out of scope per the user's answer).
+
+Verified: `ruff check` clean, all 3 tests pass, and a full live smoke test through the rebuilt Docker stack — `list_posts`/`search_posts` still 2 queries, `posts_by_tag` still 3, `get_post` still 4, and both `create_post`/`create_comment` exercised end-to-end with real writes.
+
+**User:** commit the service refactor
+
+**Claude:** Committed `blog/api.py` + `blog/services.py` as `3101471` — "Extract PostService and CommentService from blog/api.py."
+
+**User:** commit my NOTES
+
+**Claude:** User had rewritten/condensed `NOTES.md` by hand between turns. Committed it as-is as `188dae2` — "Condense NOTES.md" — without altering the user's edits.
+
+**User:** update CHAT_TRANSCRIPT.md
+
+**Claude:** Updated this transcript with the intervening exchanges (service refactor, its commit, and the NOTES.md commit).
