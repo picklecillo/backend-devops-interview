@@ -1,13 +1,19 @@
-import os
 from pathlib import Path
+
+import environ
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = "django-insecure-9!^p2zr8m=k$d3v0&xq+1wybho4ag&7lcfu+ej(nti6r%h@m4s"
+env = environ.Env()
+environ.Env.read_env(BASE_DIR / ".env")
 
-DEBUG = True
+SECRET_KEY = env.str(
+    "SECRET_KEY", default="django-insecure-9!^p2zr8m=k$d3v0&xq+1wybho4ag&7lcfu+ej(nti6r%h@m4s"
+)
 
-ALLOWED_HOSTS = ["*"]
+DEBUG = env.bool("DEBUG", default=True)
+
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["*"])
 
 
 INSTALLED_APPS = [
@@ -54,11 +60,11 @@ WSGI_APPLICATION = "core.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.environ.get("POSTGRES_DB", "backend_devops_interview"),
-        "USER": os.environ.get("POSTGRES_USER", "postgres"),
-        "PASSWORD": os.environ.get("POSTGRES_PASSWORD", "postgres"),
-        "HOST": os.environ.get("POSTGRES_HOST", "localhost"),
-        "PORT": os.environ.get("POSTGRES_PORT", "5432"),
+        "NAME": env.str("POSTGRES_DB", default="backend_devops_interview"),
+        "USER": env.str("POSTGRES_USER", default="postgres"),
+        "PASSWORD": env.str("POSTGRES_PASSWORD", default="postgres"),
+        "HOST": env.str("POSTGRES_HOST", default="localhost"),
+        "PORT": env.str("POSTGRES_PORT", default="5432"),
     }
 }
 
