@@ -1,4 +1,4 @@
-.PHONY: install up logs down seed
+.PHONY: install up logs down seed test format
 
 install:
 	export PATH="$$HOME/.local/bin:$$PATH"; \
@@ -17,3 +17,9 @@ down:
 
 seed:
 	docker compose exec app uv run python manage.py seed
+
+test:
+	mise exec -- uv run pytest
+
+format:
+	mise exec -- uv run ruff format .
