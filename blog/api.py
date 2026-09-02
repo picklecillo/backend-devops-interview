@@ -1,8 +1,7 @@
-from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from ninja import Router
 
-from blog.models import Comment, Post, Tag, User
+from blog.models import Post, Tag, User
 from blog.schemas import (
     CommentCreateIn,
     CommentCreateOut,
@@ -12,6 +11,7 @@ from blog.schemas import (
     PostListOut,
     UserDetailOut,
 )
+from blog.services import CommentService, PostService
 
 router = Router()
 
@@ -45,50 +45,27 @@ POSTS_PAGE_SIZE = 100
 @router.get("/posts", response=list[PostListOut])
 def list_posts(request, page: int = 1):
     start = (page - 1) * POSTS_PAGE_SIZE
-    posts = (
-        Post.objects.filter(is_published=True)
-        .select_related("author")
-        .prefetch_related("tags")
-        .order_by("-created_at")[start : start + POSTS_PAGE_SIZE]
-    )
+    posts = PostService.list_posts()[start : start + POSTS_PAGE_SIZE]
     return [_serialize_post_list(p) for p in posts]
 
 
 @router.get("/posts/search", response=list[PostListOut])
 def search_posts(request, q: str, page: int = 1):
     start = (page - 1) * POSTS_PAGE_SIZE
-    posts = (
-        Post.objects.filter(
-            Q(title__icontains=q) | Q(body__icontains=q),
-            is_published=True,
-        )
-        .select_related("author")
-        .prefetch_related("tags")
-        .order_by("-created_at")[start : start + POSTS_PAGE_SIZE]
-    )
+    posts = PostService.search_posts(q)[start : start + POSTS_PAGE_SIZE]
     return [_serialize_post_list(p) for p in posts]
 
 
 @router.get("/posts/by-tag/{slug}", response=list[PostListOut])
 def posts_by_tag(request, slug: str, page: int = 1):
-    tag = get_object_or_404(Tag, slug=slug)
     start = (page - 1) * POSTS_PAGE_SIZE
-    posts = (
-        tag.posts.filter(is_published=True)
-        .select_related("author")
-        .prefetch_related("tags")
-        .order_by("-created_at")[start : start + POSTS_PAGE_SIZE]
-    )
+    posts = PostService.posts_by_tag(slug)[start : start + POSTS_PAGE_SIZE]
     return [_serialize_post_list(p) for p in posts]
 
 
 @router.get("/posts/{post_id}", response=PostDetailOut)
 def get_post(request, post_id: int):
-    post = get_object_or_404(
-        Post.objects.select_related("author").prefetch_related("tags"), id=post_id
-    )
-    post.view_count += 1
-    post.save()
+    post = PostService.get_post(post_id)
 
     comments = [
         {
@@ -97,7 +74,7 @@ def get_post(request, post_id: int):
             "body": c.body,
             "created_at": c.created_at,
         }
-        for c in post.comments.select_related("author").order_by("created_at")
+        for c in CommentService.comments_for_post(post)
     ]
     return {
         "id": post.id,
@@ -114,23 +91,20 @@ def get_post(request, post_id: int):
 
 @router.post("/posts", response=PostCreateOut)
 def create_post(request, payload: PostCreateIn):
-    author = get_object_or_404(User, id=payload.author_id)
-    post = Post.objects.create(
-        author=author,
+    post = PostService.create_post(
+        author_id=payload.author_id,
         title=payload.title,
         body=payload.body,
+        tag_slugs=payload.tag_slugs,
     )
-    for slug in payload.tag_slugs:
-        tag = Tag.objects.get(slug=slug)
-        post.tags.add(tag)
     return {"id": post.id, "title": post.title}
 
 
 @router.post("/posts/{post_id}/comments", response=CommentCreateOut)
 def create_comment(request, post_id: int, payload: CommentCreateIn):
-    post = get_object_or_404(Post, id=post_id)
-    author = get_object_or_404(User, id=payload.author_id)
-    comment = Comment.objects.create(post=post, author=author, body=payload.body)
+    comment = CommentService.create_comment(
+        post_id=post_id, author_id=payload.author_id, body=payload.body
+    )
     return {"id": comment.id}
 
 
