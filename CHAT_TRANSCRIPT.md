@@ -91,3 +91,15 @@ Built and ran the stack to verify. Migrations applied cleanly; seeding turned ou
 **User:** update NOTES.md and CHAT_TRANSCRIPT.md
 
 **Claude:** Updated both to cover the `test`/`format` targets, the `extend-exclude` fix, the discovered pre-existing formatting drift (left uncommitted, called out as a follow-up), and this exchange.
+
+**User:** commit the notes and transcript updates
+
+**Claude:** Committed `NOTES.md` + `CHAT_TRANSCRIPT.md` as `5f5885c` — "Add NOTES.md and CHAT_TRANSCRIPT.md."
+
+**User:** I just run make format. commit the changes
+
+**Claude:** Reviewed the diff — exactly the 5 files flagged earlier as pre-existing formatting drift (`blog/apps.py`, `blog/tests/test_comments.py`, `core/asgi.py`, `core/wsgi.py`, `manage.py`), all pure style (quote normalization, line wraps), no behavior change. Committed as `a6eb861` — "Apply ruff format to pre-existing files."
+
+**User:** update NOTES.md and CHAT_TRANSCRIPT.md
+
+**Claude:** Updated `NOTES.md` to record the format-and-commit, and removed the now-stale "didn't apply ruff format" item from the deliberately-skipped list. Updated this transcript with the intervening exchanges.

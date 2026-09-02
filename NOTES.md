@@ -9,6 +9,7 @@
 - Entrypoint only waits for the db and runs migrations, then starts the dev server. Seeding is a separate `make seed` target rather than baked into container startup, because the seed script takes a long time (see below) and shouldn't block `make up` / `make logs` from being usable.
 - `Makefile`: `install` (bootstraps mise + uv for anyone not using Docker), `up`, `logs`, `down`, `seed`, `test` (`uv run pytest` on the host), `format` (`uv run ruff format .`).
 - `pyproject.toml`: added `extend-exclude = ["*/migrations/*"]` to `[tool.ruff]` so `make format` doesn't rewrite Django-generated migration files.
+- Ran `make format` and committed the result: `blog/apps.py`, `blog/tests/test_comments.py`, `core/asgi.py`, `core/wsgi.py`, `manage.py` predated ruff being wired up as a formatter here. Pure style (quote normalization, line wraps), no behavior change.
 - Source is bind-mounted into the app container for hot reload; the container's `.venv` is a separate named volume so a host macOS `.venv` doesn't shadow the container's Linux one.
 
 **Performance: N+1 queries and unbounded list_posts**
@@ -22,7 +23,6 @@
 - **Didn't paginate `search_posts` or `posts_by_tag`.** They got the same select_related/prefetch_related fix since they share `_serialize_post_list`, but I didn't add pagination since it wasn't asked for and `posts_by_tag`/`search_posts` result sets are typically much smaller than the full post list — worth doing for consistency, but I prioritized depth on the one endpoint over breadth.
 - **No production deployment target.** Ran out of time budget before getting to containerizing for prod / picking a deploy target (Helm, ECS, etc.). The Dockerfile as written is dev-oriented (bind mounts, `runserver`, `DEBUG=True` still in settings) and would need a separate prod image (gunicorn/uvicorn, `DEBUG=False`, secret management, static file serving) before it's suitable for that.
 - **No auth/authz** and **no new test coverage**, per the README's non-goals.
-- **Didn't apply `ruff format` repo-wide.** Running `make format` reformats 5 pre-existing files (`blog/apps.py`, `blog/tests/test_comments.py`, `core/asgi.py`, `core/wsgi.py`, `manage.py`) that predate ruff being wired up as a formatter here. Left them as-is rather than bundling an unrelated style diff into this change; running `make format` and committing it separately would be a reasonable first PR for whoever owns this next.
 
 ## What I'd do next with another day
 
