@@ -37,6 +37,17 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+if DEBUG:
+    INSTALLED_APPS += ["debug_toolbar"]
+    MIDDLEWARE.insert(1, "debug_toolbar.middleware.DebugToolbarMiddleware")
+    INTERNAL_IPS = ["127.0.0.1"]
+
+    # Docker doesn't use 127.0.0.1 as the client IP, so bypass the IP check in DEBUG mode
+    DEBUG_TOOLBAR_CONFIG = {
+        "SHOW_TOOLBAR_CALLBACK": lambda request: DEBUG,
+        "UPDATE_ON_FETCH": True,
+    }
+
 ROOT_URLCONF = "core.urls"
 
 TEMPLATES = [
