@@ -1,0 +1,29 @@
+# Fly.io config for a self-managed, single-node Postgres instance.
+# Deploy from this directory: cd db && fly deploy
+#
+# One-time setup before the first deploy:
+#   fly apps create backend-devops-interview-db-8675309
+#   fly volumes create pgdata -a backend-devops-interview-db-8675309 --region scl --size 10
+#   fly secrets set POSTGRES_PASSWORD=... -a backend-devops-interview-db-8675309
+#
+# No [http_service] block - this app is reachable only from other apps in the
+# same Fly org, over the private 6PN network, at backend-devops-interview-db-8675309.internal:5432.
+# It is not exposed to the public internet.
+
+app = "backend-devops-interview-db-8675309"   # must match POSTGRES_HOST in ../fly.toml
+primary_region = "scl"
+
+[build]
+
+[env]
+  POSTGRES_DB = "backend_devops_interview"
+  POSTGRES_USER = "postgres"
+  PGDATA = "/var/lib/postgresql/data/pgdata"
+
+[[mounts]]
+  source = "pgdata"
+  destination = "/var/lib/postgresql/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

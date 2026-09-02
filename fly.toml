@@ -1,0 +1,40 @@
+# Fly.io config for the app process. Deploy with: fly deploy
+#
+# Secrets (never put these here) must be set once via:
+#   fly secrets set SECRET_KEY=... POSTGRES_PASSWORD=...
+
+app = "backend-devops-interview-8675309"      # must be globally unique on Fly - rename
+primary_region = "scl"
+
+[build]
+  dockerfile = "Dockerfile.fly"
+
+[deploy]
+  release_command = "uv run python manage.py migrate --noinput"
+
+[env]
+  DEBUG = "False"
+  ALLOWED_HOSTS = "backend-devops-interview-8675309.fly.dev"
+  POSTGRES_DB = "backend_devops_interview"
+  POSTGRES_USER = "postgres"
+  # Matches the app name in db/fly.toml - rename both together.
+  POSTGRES_HOST = "backend-devops-interview-db-8675309.internal"
+  POSTGRES_PORT = "5432"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -4,6 +4,7 @@ from django.urls import path
 from ninja import NinjaAPI
 
 from blog.api import router as blog_router
+from core.views import healthz
 
 api = NinjaAPI()
 api.add_router("/", blog_router)
@@ -11,6 +12,7 @@ api.add_router("/", blog_router)
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/", api.urls),
+    path("healthz", healthz),
 ]
 
 if settings.DEBUG:

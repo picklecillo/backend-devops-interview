@@ -50,6 +50,10 @@ if DEBUG:
         "SHOW_TOOLBAR_CALLBACK": lambda request: django_settings.DEBUG,
         "UPDATE_ON_FETCH": True,
     }
+else:
+    # runserver already serves static files directly from source dirs in DEBUG;
+    # whitenoise (+ collectstatic in the prod Docker build) takes over in production.
+    MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")
 
 ROOT_URLCONF = "core.urls"
 
@@ -97,5 +101,22 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# In DEBUG, keep Django's default static storage so runserver can serve files
+# straight from their source dirs without a collectstatic step. In production,
+# whitenoise's manifest storage needs collectstatic (run during the Docker build).
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": (
+            "django.contrib.staticfiles.storage.StaticFilesStorage"
+            if DEBUG
+            else "whitenoise.storage.CompressedManifestStaticFilesStorage"
+        ),
+    },
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
